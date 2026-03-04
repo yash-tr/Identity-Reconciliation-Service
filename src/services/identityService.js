@@ -5,54 +5,7 @@ const {
   getPrimaryContact,
   getAllLinkedContacts,
 } = require('./contactService');
-
-/**
- * Helper to format the consolidated contact response.
- * This will later be extracted to a dedicated responseFormatter utility (Commit 14).
- *
- * @param {Object} primary
- * @param {Array} allContacts
- */
-function buildConsolidatedResponse(primary, allContacts) {
-  if (!primary) {
-    return {
-      contact: {
-        primaryContatctId: null,
-        emails: [],
-        phoneNumbers: [],
-        secondaryContactIds: [],
-      },
-    };
-  }
-
-  const emailsSet = new Set();
-  const phonesSet = new Set();
-  const secondaryIds = [];
-
-  // Ensure primary's values go first if present
-  if (primary.email) emailsSet.add(primary.email);
-  if (primary.phoneNumber) phonesSet.add(primary.phoneNumber);
-
-  for (const c of allContacts) {
-    if (c.id === primary.id) continue;
-
-    if (c.email) emailsSet.add(c.email);
-    if (c.phoneNumber) phonesSet.add(c.phoneNumber);
-
-    if (c.linkPrecedence === 'secondary') {
-      secondaryIds.push(c.id);
-    }
-  }
-
-  return {
-    contact: {
-      primaryContatctId: primary.id,
-      emails: Array.from(emailsSet),
-      phoneNumbers: Array.from(phonesSet),
-      secondaryContactIds: secondaryIds,
-    },
-  };
-}
+const { formatContactResponse } = require('../utils/responseFormatter');
 
 /**
  * Main identity reconciliation function.
@@ -67,7 +20,6 @@ function buildConsolidatedResponse(primary, allContacts) {
  * @returns {Promise<Object>} consolidated contact response
  */
 async function identifyContact(email, phoneNumber) {
-  // Find all existing contacts matching email OR phone
   const matchingContacts = await findContactsByEmailOrPhone(email, phoneNumber);
 
   // CASE 1: No existing contacts → create new primary contact
@@ -79,7 +31,7 @@ async function identifyContact(email, phoneNumber) {
       linkedId: null,
     });
 
-    return buildConsolidatedResponse(newPrimary, [newPrimary]);
+    return formatContactResponse(newPrimary, [newPrimary]);
   }
 
   // Build set of distinct primary contacts referenced by the matches
@@ -93,15 +45,12 @@ async function identifyContact(email, phoneNumber) {
   }
   const primaries = Array.from(primaryMap.values());
 
-  // Helper to determine if requested email/phone are already present in a chain
-  const hasEmailIn = (contacts) =>
-    email && contacts.some((c) => c.email === email);
+  const hasEmailIn = (contacts) => email && contacts.some((c) => c.email === email);
   const hasPhoneIn = (contacts) =>
     phoneNumber && contacts.some((c) => c.phoneNumber === phoneNumber);
 
   // CASE 4: Multiple primaries → need to merge
   if (primaries.length > 1) {
-    // Sort by createdAt to find the oldest primary
     primaries.sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
@@ -110,8 +59,7 @@ async function identifyContact(email, phoneNumber) {
     const primariesToConvert = primaries.slice(1);
 
     // Convert newer primaries to secondary and re-point their children
-    // Note: For now this is not wrapped in a DB transaction; that will be added in a later commit.
-    // eslint-disable-next-line no-restricted-syntax
+    // (Transaction will be added in a later commit)
     for (const p of primariesToConvert) {
       // eslint-disable-next-line no-await-in-loop
       await prisma.contact.update({
@@ -122,7 +70,6 @@ async function identifyContact(email, phoneNumber) {
         },
       });
 
-      // Re-link children of this primary to the oldest primary
       // eslint-disable-next-line no-await-in-loop
       await prisma.contact.updateMany({
         where: { linkedId: p.id },
@@ -130,7 +77,6 @@ async function identifyContact(email, phoneNumber) {
       });
     }
 
-    // After merge, decide if we need to create a new secondary for the incoming data
     let allLinkedAfterMerge = await getAllLinkedContacts(oldestPrimary.id);
 
     const emailIsNew = email && !hasEmailIn(allLinkedAfterMerge);
@@ -152,26 +98,23 @@ async function identifyContact(email, phoneNumber) {
       allLinkedAfterMerge = await getAllLinkedContacts(oldestPrimary.id);
     }
 
-    return buildConsolidatedResponse(oldestPrimary, allLinkedAfterMerge);
+    return formatContactResponse(oldestPrimary, allLinkedAfterMerge);
   }
 
-  // At this point we have exactly one primary in the chain
+  // Exactly one primary in this chain
   const primary = primaries[0];
 
-  // Check for exact match among matching contacts
+  // CASE 2: exact match
   const exactMatch = matchingContacts.find(
     (c) => c.email === email && c.phoneNumber === phoneNumber,
   );
-
   if (exactMatch) {
-    // CASE 2: Exact match → just return consolidated info for this primary
     const allLinked = await getAllLinkedContacts(primary.id);
-    return buildConsolidatedResponse(primary, allLinked);
+    return formatContactResponse(primary, allLinked);
   }
 
   // CASE 3: Existing contact(s), but new info (email or phone) → create secondary
   let allLinkedForPrimary = await getAllLinkedContacts(primary.id);
-
   const emailIsNewForPrimary = email && !hasEmailIn(allLinkedForPrimary);
   const phoneIsNewForPrimary = phoneNumber && !hasPhoneIn(allLinkedForPrimary);
 
@@ -186,7 +129,7 @@ async function identifyContact(email, phoneNumber) {
     allLinkedForPrimary = await getAllLinkedContacts(primary.id);
   }
 
-  return buildConsolidatedResponse(primary, allLinkedForPrimary);
+  return formatContactResponse(primary, allLinkedForPrimary);
 }
 
 module.exports = {
