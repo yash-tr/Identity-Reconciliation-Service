@@ -1,6 +1,6 @@
-# Bitespeed Identity Reconciliation Service
+# Identity Reconciliation Service
 
-Backend service implementing the Bitespeed Identity Reconciliation task. It links multiple contacts (different emails and phone numbers) belonging to the same logical customer using a single `/identify` endpoint.
+Backend service implementing the Identity Reconciliation task. It links multiple contacts (different emails and phone numbers) belonging to the same logical customer using a single `/identify` endpoint.
 
 ---
 
@@ -19,7 +19,7 @@ https://identity-reconciliation-service-8p7y.onrender.com/identify
 
 ## 1. Problem Summary (PRD)
 
-FluxKart.com uses Bitespeed to collect contact details for shoppers. One person (like Doc Brown) may use multiple emails and phone numbers across different orders. The goal is to reconcile these into a single identity.
+ The goal is to reconcile these into a single identity.
 
 The core rules:
 
