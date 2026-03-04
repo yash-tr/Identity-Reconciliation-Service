@@ -59,23 +59,26 @@ async function identifyContact(email, phoneNumber) {
     const primariesToConvert = primaries.slice(1);
 
     // Convert newer primaries to secondary and re-point their children
-    // (Transaction will be added in a later commit)
-    for (const p of primariesToConvert) {
-      // eslint-disable-next-line no-await-in-loop
-      await prisma.contact.update({
-        where: { id: p.id },
-        data: {
-          linkPrecedence: 'secondary',
-          linkedId: oldestPrimary.id,
-        },
-      });
+    // Wrap in a transaction to keep data consistent
+    await prisma.$transaction(async (tx) => {
+      // eslint-disable-next-line no-restricted-syntax
+      for (const p of primariesToConvert) {
+        // eslint-disable-next-line no-await-in-loop
+        await tx.contact.update({
+          where: { id: p.id },
+          data: {
+            linkPrecedence: 'secondary',
+            linkedId: oldestPrimary.id,
+          },
+        });
 
-      // eslint-disable-next-line no-await-in-loop
-      await prisma.contact.updateMany({
-        where: { linkedId: p.id },
-        data: { linkedId: oldestPrimary.id },
-      });
-    }
+        // eslint-disable-next-line no-await-in-loop
+        await tx.contact.updateMany({
+          where: { linkedId: p.id },
+          data: { linkedId: oldestPrimary.id },
+        });
+      }
+    });
 
     let allLinkedAfterMerge = await getAllLinkedContacts(oldestPrimary.id);
 

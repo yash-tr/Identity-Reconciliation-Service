@@ -20,7 +20,8 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
-app.use('/api', identifyRoutes);
+// Spec says endpoint should be POST /identify (no prefix)
+app.use(identifyRoutes);
 
 // 404 handler 
 app.use(notFoundHandler);

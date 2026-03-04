@@ -40,13 +40,23 @@ const errorHandler = (err, req, res, next) => {
     message = 'Invalid ID format';
   }
 
+  // Prisma / database errors (Pxxxx codes)
+  if (err.code && typeof err.code === 'string' && err.code.startsWith('P')) {
+    statusCode = 500;
+    message = 'A database error occurred';
+  }
+
   // Send error response
   res.status(statusCode).json({
     error: {
       message,
       statusCode,
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-    }
+      // Helpful extra info in development
+      ...(process.env.NODE_ENV === 'development' && {
+        stack: err.stack,
+        code: err.code,
+      }),
+    },
   });
 };
 

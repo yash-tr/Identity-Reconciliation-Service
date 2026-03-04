@@ -24,10 +24,15 @@ const PHONE_REGEX = /^\+?[0-9\- ]{5,20}$/;
  * Validate payload for the /identify endpoint.
  * Returns a normalized { email, phoneNumber } object or throws ValidationError.
  *
- * @param {{ email?: string|null, phoneNumber?: string|number|null }} payload
+ * @param {{ email?: string|null, phoneNumber?: string|number|null }|any} payload
  * @returns {{ email: string|null, phoneNumber: string|null }}
  */
 function validateIdentifyPayload(payload = {}) {
+  // Malformed body (non-object / array / null)
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ValidationError('Request body must be a JSON object');
+  }
+
   let { email = null, phoneNumber = null } = payload;
 
   // Normalize phoneNumber if it's a number
