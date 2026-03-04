@@ -59,6 +59,8 @@ function buildConsolidatedResponse(primary, allContacts) {
  *
  * - Case 1: No existing contacts → create new primary
  * - Case 2: One existing contact with exact match → return consolidated info
+ * - Case 3: Existing contacts, new info (new email/phone) → create secondary
+ * - Case 4: Email matches one primary, phone matches another → merge primaries
  *
  * @param {string|null} email
  * @param {string|null} phoneNumber
@@ -80,9 +82,81 @@ async function identifyContact(email, phoneNumber) {
     return buildConsolidatedResponse(newPrimary, [newPrimary]);
   }
 
-  // Determine the primary contact for this set 
-  const referenceContact = matchingContacts[0];
-  const primary = await getPrimaryContact(referenceContact);
+  // Build set of distinct primary contacts referenced by the matches
+  const primaryMap = new Map();
+  for (const c of matchingContacts) {
+    // eslint-disable-next-line no-await-in-loop
+    const p = await getPrimaryContact(c);
+    if (p) {
+      primaryMap.set(p.id, p);
+    }
+  }
+  const primaries = Array.from(primaryMap.values());
+
+  // Helper to determine if requested email/phone are already present in a chain
+  const hasEmailIn = (contacts) =>
+    email && contacts.some((c) => c.email === email);
+  const hasPhoneIn = (contacts) =>
+    phoneNumber && contacts.some((c) => c.phoneNumber === phoneNumber);
+
+  // CASE 4: Multiple primaries → need to merge
+  if (primaries.length > 1) {
+    // Sort by createdAt to find the oldest primary
+    primaries.sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+    const oldestPrimary = primaries[0];
+    const primariesToConvert = primaries.slice(1);
+
+    // Convert newer primaries to secondary and re-point their children
+    // Note: For now this is not wrapped in a DB transaction; that will be added in a later commit.
+    // eslint-disable-next-line no-restricted-syntax
+    for (const p of primariesToConvert) {
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.contact.update({
+        where: { id: p.id },
+        data: {
+          linkPrecedence: 'secondary',
+          linkedId: oldestPrimary.id,
+        },
+      });
+
+      // Re-link children of this primary to the oldest primary
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.contact.updateMany({
+        where: { linkedId: p.id },
+        data: { linkedId: oldestPrimary.id },
+      });
+    }
+
+    // After merge, decide if we need to create a new secondary for the incoming data
+    let allLinkedAfterMerge = await getAllLinkedContacts(oldestPrimary.id);
+
+    const emailIsNew = email && !hasEmailIn(allLinkedAfterMerge);
+    const phoneIsNew = phoneNumber && !hasPhoneIn(allLinkedAfterMerge);
+
+    const needNewContact =
+      !matchingContacts.find(
+        (c) => c.email === email && c.phoneNumber === phoneNumber,
+      ) && (emailIsNew || phoneIsNew);
+
+    if (needNewContact) {
+      await Contact.create({
+        email,
+        phoneNumber,
+        linkPrecedence: 'secondary',
+        linkedId: oldestPrimary.id,
+      });
+
+      allLinkedAfterMerge = await getAllLinkedContacts(oldestPrimary.id);
+    }
+
+    return buildConsolidatedResponse(oldestPrimary, allLinkedAfterMerge);
+  }
+
+  // At this point we have exactly one primary in the chain
+  const primary = primaries[0];
 
   // Check for exact match among matching contacts
   const exactMatch = matchingContacts.find(
@@ -95,9 +169,24 @@ async function identifyContact(email, phoneNumber) {
     return buildConsolidatedResponse(primary, allLinked);
   }
 
-  // fallback: treat as if only existing data matters.
-  const allLinked = await getAllLinkedContacts(primary.id);
-  return buildConsolidatedResponse(primary, allLinked);
+  // CASE 3: Existing contact(s), but new info (email or phone) → create secondary
+  let allLinkedForPrimary = await getAllLinkedContacts(primary.id);
+
+  const emailIsNewForPrimary = email && !hasEmailIn(allLinkedForPrimary);
+  const phoneIsNewForPrimary = phoneNumber && !hasPhoneIn(allLinkedForPrimary);
+
+  if (emailIsNewForPrimary || phoneIsNewForPrimary) {
+    await Contact.create({
+      email,
+      phoneNumber,
+      linkPrecedence: 'secondary',
+      linkedId: primary.id,
+    });
+
+    allLinkedForPrimary = await getAllLinkedContacts(primary.id);
+  }
+
+  return buildConsolidatedResponse(primary, allLinkedForPrimary);
 }
 
 module.exports = {
