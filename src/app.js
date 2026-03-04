@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const requestLogger = require('./middleware/requestLogger');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
-const prisma = require('./config/database');
+const identifyRoutes = require('./routes/identifyRoutes');
 
 const app = express();
 
@@ -19,27 +19,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Temporary test endpoint (remove later)
-app.get('/test-db', async (req, res) => {
-  try {
-    const contact = await prisma.contact.create({
-      data: {
-        email: 'test@test.com',
-        phoneNumber: '1234567890',
-        linkPrecedence: 'primary',
-      },
-    });
+// API routes
+app.use('/api', identifyRoutes);
 
-    res.json({ success: true, contact });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 404 handler (must be after all routes)
+// 404 handler 
 app.use(notFoundHandler);
 
-// Error handler (must be last)
+// Error handler 
 app.use(errorHandler);
 
 module.exports = app;
